@@ -14,6 +14,7 @@ interface scrapedElement {
 interface ScrapeInit {
   location: string;
   description: string;
+  isProxy: boolean
 }
 
 
@@ -24,7 +25,12 @@ class ProxyManager {
     this.proxies = []
   }
 
-  async fetchProxies() {
+  async fetchProxies(isProxy: boolean) {
+
+    if(!isProxy) {
+      return []
+    }
+
     const proxyRes: {
       data: string
     } = await axios.get("https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=protocolipport&format=text")
@@ -32,7 +38,6 @@ class ProxyManager {
     this.proxies = proxyRes.data.split('\r').toString().split('\n').toString().split(',').filter(string => string.length > 0 && string.includes('http'))
 
     return this.proxies   
-    
   }
 }
 
@@ -64,18 +69,23 @@ class HttpManager {
         "User-Agent":
           this.userAgents[getRandomArbitrary(0, this.userAgents.length - 1)],
       },
-      httpsAgent: new HttpsProxyAgent(proxies[getRandomArbitrary(0, proxies.length)])})
+      // Determines whether proxy status is enabled or not
+      httpsAgent: proxies.length == 0 ? false : new HttpsProxyAgent(proxies[getRandomArbitrary(0, proxies.length)])}) 
   }
 }
 
 export default class Scrape {
   description: string;
   location: string;
+  isProxy: boolean
   scrapedData: scrapedElement[];
 
-  constructor({ location, description }: ScrapeInit) {
+  constructor({ location, description, isProxy }: ScrapeInit) {
     this.description = description;
     this.location = location;
+    console.log(isProxy)
+    this.isProxy = !isProxy || isProxy === undefined ? false : isProxy
+    console.log(this.isProxy)
     this.scrapedData = [];
   }
   
@@ -97,7 +107,9 @@ export default class Scrape {
 
         try {
           console.log("Getting url")
-          const proxies = await new ProxyManager().fetchProxies()
+          
+          // This.isProxy is a state that determines whether or not proxies should be used/collected
+          const proxies = await new ProxyManager().fetchProxies(this.isProxy)
           res = await new HttpManager(url).fetchUrl(proxies)
 
           break 

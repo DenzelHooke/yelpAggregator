@@ -19,6 +19,7 @@ interface scrapedElement {
 interface scrapeRequestBody {
   location: string;
   description: string;
+  isProxy: boolean
 }
 
 
@@ -31,6 +32,7 @@ export async function scrapePage(req: Request, res: Response) {
   }
  
   const bodyData: scrapeRequestBody = req.body;
+  console.log(bodyData)
   const scraper = new Scrape(bodyData);
 
   const companyNames: Array<scrapedElement> = []; 
