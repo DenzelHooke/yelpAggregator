@@ -1,5 +1,5 @@
 import express, { Request, Response } from "express";
-import { testEndpoint } from "../controllers/test.js";
+import { testEndpoint, notionGetTest } from "../controllers/test.js";
 import { scrapePage } from "../controllers/scraper.js";
 const router = express.Router();
 
@@ -9,5 +9,7 @@ router.get("/", (req: Request, res: Response) => {
 });
 
 router.post("/scrape", scrapePage);
+
+router.get("/notionTestGet", notionGetTest )
 
 export default router;

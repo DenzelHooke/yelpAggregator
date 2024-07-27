@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
-import axios from "axios";
+import axios, { AxiosResponse } from "axios";
 import { getRandomArbitrary, sleep } from "../helpers.js";
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 const reMatch = /\(*\d\d\d\)*(-| )+\d\d\d*(-| )\d\d\d\d/g;
 
@@ -15,16 +16,33 @@ interface ScrapeInit {
   description: string;
 }
 
-export default class Scrape {
-  description: string;
-  location: string;
-  scrapedData: scrapedElement[];
-  userAgents: Array<string>;
 
-  constructor({ location, description }: ScrapeInit) {
-    this.description = description;
-    this.location = location;
-    this.scrapedData = [];
+class ProxyManager {
+  private proxies: string[]
+
+  constructor() {
+    this.proxies = []
+  }
+
+  async fetchProxies() {
+    const proxyRes: {
+      data: string
+    } = await axios.get("https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=protocolipport&format=text")
+    
+    this.proxies = proxyRes.data.split('\r').toString().split('\n').toString().split(',').filter(string => string.length > 0 && string.includes('http'))
+
+    return this.proxies   
+    
+  }
+}
+
+
+class HttpManager {
+  private url: string;
+  private userAgents: string[]
+  
+  constructor(url: string) {
+    this.url = url
     this.userAgents = [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246",
       "Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36",
@@ -38,29 +56,70 @@ export default class Scrape {
       "Mozilla/5.0 (iPhone14,3; U; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/602.1.50 (KHTML, like Gecko) Version/10.0 Mobile/19A346 Safari/602.1",
     ];
   }
+  
+  async fetchUrl(proxies: string[]): Promise<AxiosResponse> {
 
-  async getPage(url: string, slow: boolean): Promise<cheerio.Root> {
+    return await axios.get(this.url, {
+      headers: {
+        "User-Agent":
+          this.userAgents[getRandomArbitrary(0, this.userAgents.length - 1)],
+      },
+      httpsAgent: new HttpsProxyAgent(proxies[getRandomArbitrary(0, proxies.length)])})
+  }
+}
+
+export default class Scrape {
+  description: string;
+  location: string;
+  scrapedData: scrapedElement[];
+
+  constructor({ location, description }: ScrapeInit) {
+    this.description = description;
+    this.location = location;
+    this.scrapedData = [];
+  }
+  
+  async getPage(url: string, slow: boolean): Promise<cheerio.Root | false> {
     try {
       console.log("Getting page: ", url);
 
-      if (slow) {
-        await sleep(getRandomArbitrary(1500, 2500));
-      } else {
-        await sleep(getRandomArbitrary(1000, 3000));
+      const retryLimit = 9999
+      let retries = 0
+      let res;
+
+      while (retries <= retryLimit) {
+
+        if (slow) {
+          await sleep(getRandomArbitrary(1500, 3000));
+        } else {
+          await sleep(getRandomArbitrary(500, 800));
+        }
+
+        try {
+          console.log("Getting url")
+          const proxies = await new ProxyManager().fetchProxies()
+          res = await new HttpManager(url).fetchUrl(proxies)
+
+          break 
+
+        } catch (error) {
+          console.log("Request failed. Retrying")
+          retries += 1 
+          console.log(error)
+        }
+      }  
+
+      if(retries === retryLimit) {
+        return false
+      }
+      
+
+      if(!res) {
+        return false
       }
 
-      const res = await axios.get(url, {
-        headers: {
-          "User-Agent":
-            this.userAgents[getRandomArbitrary(0, this.userAgents.length - 1)],
-        },
-      });
-
-      const webpageData = res.data;
-      // console.log(webpageData);
-
       // Return cheerio object that's ready to scrape
-      return cheerio.load(webpageData);
+      return cheerio.load(res.data);
     } catch (error) {
       console.log("Error while getting page");
       throw error;
@@ -69,7 +128,7 @@ export default class Scrape {
 
   async scrapePage(
     pageCount: number
-  ): Promise<Array<scrapedElement> | undefined> {
+  ): Promise<Array<scrapedElement> | undefined | false> {
     // Build string with custom parameters
     const yelpParamString = `https://www.yelp.com/search?find_desc=${
       this.description
@@ -77,7 +136,14 @@ export default class Scrape {
 
     // Make request to website
 
-    const $: cheerio.Root = await this.getPage(yelpParamString, false);
+    const cheerio = await this.getPage(yelpParamString, false)
+
+
+    if(!cheerio) {
+      return false
+    }
+    
+    const $: cheerio.Root = cheerio;
 
     const main = $('main[id="main-content"]');
 
@@ -116,6 +182,11 @@ export default class Scrape {
           "https://www.yelp.com" + dataObject.href,
           true
         );
+
+        if(!$inner) {
+          console.log("Not inner data. Returning false")
+          return false
+        }
 
         const sidebarContent = $inner("div[data-testid='sidebar-content']");
 
