@@ -14,40 +14,45 @@ interface scrapedElement {
 interface ScrapeInit {
   location: string;
   description: string;
-  isProxy: boolean
+  isProxy: boolean;
 }
 
-
 class ProxyManager {
-  private proxies: string[]
+  private proxies: string[];
 
   constructor() {
-    this.proxies = []
+    this.proxies = [];
   }
 
   async fetchProxies(isProxy: boolean) {
-
-    if(!isProxy) {
-      return []
+    if (!isProxy) {
+      return [];
     }
 
     const proxyRes: {
-      data: string
-    } = await axios.get("https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=protocolipport&format=text")
-    
-    this.proxies = proxyRes.data.split('\r').toString().split('\n').toString().split(',').filter(string => string.length > 0 && string.includes('http'))
+      data: string;
+    } = await axios.get(
+      "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=protocolipport&format=text"
+    );
 
-    return this.proxies   
+    this.proxies = proxyRes.data
+      .split("\r")
+      .toString()
+      .split("\n")
+      .toString()
+      .split(",")
+      .filter((string) => string.length > 0 && string.includes("http"));
+
+    return this.proxies;
   }
 }
 
-
 class HttpManager {
   private url: string;
-  private userAgents: string[]
-  
+  private userAgents: string[];
+
   constructor(url: string) {
-    this.url = url
+    this.url = url;
     this.userAgents = [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246",
       "Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36",
@@ -61,73 +66,75 @@ class HttpManager {
       "Mozilla/5.0 (iPhone14,3; U; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/602.1.50 (KHTML, like Gecko) Version/10.0 Mobile/19A346 Safari/602.1",
     ];
   }
-  
-  async fetchUrl(proxies: string[]): Promise<AxiosResponse> {
 
+  async fetchUrl(proxies: string[] | null): Promise<AxiosResponse> {
     return await axios.get(this.url, {
       headers: {
         "User-Agent":
           this.userAgents[getRandomArbitrary(0, this.userAgents.length - 1)],
       },
       // Determines whether proxy status is enabled or not
-      httpsAgent: proxies.length == 0 ? false : new HttpsProxyAgent(proxies[getRandomArbitrary(0, proxies.length)])}) 
+      // httpsAgent:
+      //   proxies.length == 0
+      //     ? false
+      //     : new HttpsProxyAgent(proxies[getRandomArbitrary(0, proxies.length)]),
+    });
   }
 }
 
 export default class Scrape {
   description: string;
   location: string;
-  isProxy: boolean
+  isProxy: boolean;
   scrapedData: scrapedElement[];
 
   constructor({ location, description, isProxy }: ScrapeInit) {
     this.description = description;
     this.location = location;
-    console.log(isProxy)
-    this.isProxy = !isProxy || isProxy === undefined ? false : isProxy
-    console.log(this.isProxy)
+
+    this.isProxy = isProxy === undefined ? false : true;
+
     this.scrapedData = [];
   }
-  
+
   async getPage(url: string, slow: boolean): Promise<cheerio.Root | false> {
     try {
       console.log("Getting page: ", url);
 
-      const retryLimit = 9999
-      let retries = 0
+      const retryLimit = 3;
+      let retries = 0;
       let res;
 
-      while (retries <= retryLimit) {
-
+      while (retries < retryLimit) {
         if (slow) {
+          console.log("Sleeping...[SLOW]");
           await sleep(getRandomArbitrary(1500, 3000));
         } else {
+          console.log("Sleeping...[FAST]");
           await sleep(getRandomArbitrary(500, 800));
         }
 
         try {
-          console.log("Getting url")
-          
+          console.log("Getting url");
+
           // This.isProxy is a state that determines whether or not proxies should be used/collected
-          const proxies = await new ProxyManager().fetchProxies(this.isProxy)
-          res = await new HttpManager(url).fetchUrl(proxies)
+          // const proxies = await new ProxyManager().fetchProxies(this.isProxy);
+          res = await new HttpManager(url).fetchUrl(null);
 
-          break 
-
+          break;
         } catch (error) {
-          console.log("Request failed. Retrying")
-          retries += 1 
-          console.log(error)
+          console.log(error);
+          console.log("Request failed. Retrying");
+          retries += 1;
         }
-      }  
-
-      if(retries === retryLimit) {
-        return false
       }
-      
 
-      if(!res) {
-        return false
+      if (retries === retryLimit) {
+        return false;
+      }
+
+      if (!res) {
+        return false;
       }
 
       // Return cheerio object that's ready to scrape
@@ -141,20 +148,19 @@ export default class Scrape {
   async scrapePage(
     pageCount: number
   ): Promise<Array<scrapedElement> | undefined | false> {
-    // Build string with custom parameters
+    // Build string with custom parameters'
+    const isSlow = true;
     const yelpParamString = `https://www.yelp.com/search?find_desc=${
       this.description
     }&find_loc=${this.location}&start=${pageCount.toString()}`;
 
     // Make request to website
+    const cheerio = await this.getPage(yelpParamString, isSlow);
 
-    const cheerio = await this.getPage(yelpParamString, false)
-
-
-    if(!cheerio) {
-      return false
+    if (!cheerio) {
+      return false;
     }
-    
+
     const $: cheerio.Root = cheerio;
 
     const main = $('main[id="main-content"]');
@@ -190,19 +196,19 @@ export default class Scrape {
       }
 
       try {
+        await sleep(getRandomArbitrary(1500, 3000));
         const $inner = await this.getPage(
           "https://www.yelp.com" + dataObject.href,
           true
         );
 
-        if(!$inner) {
-          console.log("Not inner data. Returning false")
-          return false
+        if (!$inner) {
+          console.log("Not inner data. Returning false");
+          return false;
         }
 
         const sidebarContent = $inner("div[data-testid='sidebar-content']");
 
-        console.log(sidebarContent);
         if (sidebarContent.length) {
           console.log("Found sidebar content");
           const cookBookIsland = sidebarContent.find(
